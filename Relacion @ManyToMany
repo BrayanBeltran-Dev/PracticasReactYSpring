@@ -1,0 +1,358 @@
+@Entity
+@Table(name = "categorias")
+public class Categoria {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String nombre; // Ej: "Aventura", "RPG", "Shooter"
+
+    // mappedBy indica el nombre de la variable en la clase Videojuego
+    @ManyToMany(mappedBy = "categorias")
+    @JsonIgnore // ¡CRÍTICO! Evita un bucle infinito al convertir a JSON
+    private List<Videojuego> videojuegos;
+
+    // Constructores, Getters y Setters...
+    public Categoria() {}
+
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+
+    public String getNombre() { return nombre; }
+    public void setNombre(String nombre) { this.nombre = nombre; }
+
+    public List<Videojuego> getVideojuegos() { return videojuegos; }
+    public void setVideojuegos(List<Videojuego> videojuegos) { this.videojuegos = videojuegos; }
+}
+
+
+
+-------------------------------------------------------
+
+
+
+@Entity
+@Table(name = "videojuegos")
+public class Videojuego {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String titulo;
+    
+    // ... tus otros atributos ...
+
+    @ManyToMany
+    @JoinTable(
+        name = "videojuego_categoria", // Nombre de la tabla intermedia que se creará
+        joinColumns = @JoinColumn(name = "videojuego_id"), // Llave foránea de esta clase
+        inverseJoinColumns = @JoinColumn(name = "categoria_id") // Llave foránea de la otra clase
+    )
+    private List<Categoria> categorias;
+
+    // Constructores, Getters y Setters...
+    public List<Categoria> getCategorias() { return categorias; }
+    public void setCategorias(List<Categoria> categorias) { this.categorias = categorias; }
+}
+
+
+
+---------------------------------------------------
+
+
+
+// CategoriaDTO.java
+public class CategoriaDTO {
+    private Long id;
+    private String nombre;
+
+    public CategoriaDTO() {}
+    public CategoriaDTO(Long id, String nombre) {
+        this.id = id;
+        this.nombre = nombre;
+    }
+    // Getters y Setters
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public String getNombre() { return nombre; }
+    public void setNombre(String nombre) { this.nombre = nombre; }
+}
+
+
+-----------------------------------------
+
+// VideojuegoDTO.java
+public class VideojuegoDTO {
+    private Long id;
+    private String titulo;
+    private List<CategoriaDTO> categorias;
+
+    public VideojuegoDTO() {}
+    // Getters y Setters
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public String getTitulo() { return titulo; }
+    public void setTitulo(String titulo) { this.titulo = titulo; }
+    public List<CategoriaDTO> getCategorias() { return categorias; }
+    public void setCategorias(List<CategoriaDTO> categorias) { this.categorias = categorias; }
+}
+
+-----------------------------------------
+
+
+// VideojuegoRequestDTO.java  (para crear/actualizar)
+public class VideojuegoRequestDTO {
+    private String titulo;
+    private List<Long> categoriaIds; // Solo mandamos los IDs
+
+    public String getTitulo() { return titulo; }
+    public void setTitulo(String titulo) { this.titulo = titulo; }
+    public List<Long> getCategoriaIds() { return categoriaIds; }
+    public void setCategoriaIds(List<Long> categoriaIds) { this.categoriaIds = categoriaIds; }
+}
+
+-----------------------------------------
+
+
+@Service
+public class VideojuegoService {
+
+    @Autowired
+    private VideojuegoRepository videojuegoRepository;
+
+    @Autowired
+    private CategoriaRepository categoriaRepository;
+
+    private CategoriaDTO mapCategoriaToDTO(Categoria categoria) {
+        return new CategoriaDTO(categoria.getId(), categoria.getNombre());
+    }
+
+    private VideojuegoDTO mapToDTO(Videojuego videojuego) {
+        VideojuegoDTO dto = new VideojuegoDTO();
+        dto.setId(videojuego.getId());
+        dto.setTitulo(videojuego.getTitulo());
+        List<CategoriaDTO> categoriasDTO = videojuego.getCategorias() != null
+                ? videojuego.getCategorias().stream()
+                    .map(this::mapCategoriaToDTO)
+                    .collect(Collectors.toList())
+                : new ArrayList<>();
+        dto.setCategorias(categoriasDTO);
+        return dto;
+    }
+
+    // LISTAR
+    public List<VideojuegoDTO> findAll() {
+        return videojuegoRepository.findAll()
+                .stream()
+                .map(this::mapToDTO)
+                .collect(Collectors.toList());
+    }
+
+    // CREAR
+    public VideojuegoDTO save(VideojuegoRequestDTO requestDTO) {
+        Videojuego videojuego = new Videojuego();
+        videojuego.setTitulo(requestDTO.getTitulo());
+        if (requestDTO.getCategoriaIds() != null && !requestDTO.getCategoriaIds().isEmpty()) {
+            List<Categoria> categorias = categoriaRepository.findAllById(requestDTO.getCategoriaIds());
+            videojuego.setCategorias(categorias);
+        }
+        return mapToDTO(videojuegoRepository.save(videojuego));
+    }
+
+    // ACTUALIZAR
+    public Optional<VideojuegoDTO> update(Long id, VideojuegoRequestDTO requestDTO) {
+        return videojuegoRepository.findById(id).map(existente -> {
+            existente.setTitulo(requestDTO.getTitulo());
+            if (requestDTO.getCategoriaIds() != null) {
+                List<Categoria> categorias = categoriaRepository.findAllById(requestDTO.getCategoriaIds());
+                existente.setCategorias(categorias);
+            }
+            return mapToDTO(videojuegoRepository.save(existente));
+        });
+    }
+
+    // ELIMINAR
+    public boolean deleteById(Long id) {
+        if (videojuegoRepository.existsById(id)) {
+            videojuegoRepository.deleteById(id);
+            return true;
+        }
+        return false;
+    }
+}
+
+
+---------------------------------------------
+
+
+@RestController
+@RequestMapping("/api/videojuegos")
+public class VideojuegoController {
+
+    @Autowired
+    private VideojuegoService videojuegoService;
+
+    // GET /api/videojuegos
+    @GetMapping
+    public ResponseEntity<List<VideojuegoDTO>> getAll() {
+        return ResponseEntity.ok(videojuegoService.findAll());
+    }
+
+    // POST /api/videojuegos
+    @PostMapping
+    public ResponseEntity<VideojuegoDTO> create(@RequestBody VideojuegoRequestDTO requestDTO) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(videojuegoService.save(requestDTO));
+    }
+
+    // PUT /api/videojuegos/{id}
+    @PutMapping("/{id}")
+    public ResponseEntity<VideojuegoDTO> update(@PathVariable Long id,
+                                                 @RequestBody VideojuegoRequestDTO requestDTO) {
+        return videojuegoService.update(id, requestDTO)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // DELETE /api/videojuegos/{id}
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable Long id) {
+        return videojuegoService.deleteById(id)
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
+    }
+}
+
+----------------------------------------------------------
+
+export default function Header() {
+  return (
+    <nav className="navbar navbar-dark bg-dark px-3">
+      <span className="navbar-brand">🎮 GameVault</span>
+    </nav>
+  );
+}
+
+----------------------------------------------------------
+
+import Header from "./Header";
+import Form from "./Form";
+
+export default function Home() {
+  return (
+    <>
+      <Header />
+      <Form />
+    </>
+  );
+}
+
+-----------------------------------------------------------
+
+import { useState, useEffect } from "react";
+
+const API_URL = "http://localhost:8080/api/videojuegos";
+
+export default function Form() {
+  const [videojuegos, setVideojuegos] = useState([]);
+  const [titulo, setTitulo] = useState("");
+  const [editando, setEditando] = useState(null);
+
+  useEffect(() => { cargar(); }, []);
+
+  const cargar = () =>
+    fetch(API_URL).then((r) => r.json()).then(setVideojuegos);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const opts = {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ titulo, categoriaIds: [] }),
+    };
+    if (editando) {
+      await fetch(`${API_URL}/${editando.id}`, { method: "PUT", ...opts });
+    } else {
+      await fetch(API_URL, { method: "POST", ...opts });
+    }
+    setTitulo("");
+    setEditando(null);
+    cargar();
+  };
+
+  const handleEditar = (vj) => { setEditando(vj); setTitulo(vj.titulo); };
+
+  const handleEliminar = async (id) => {
+    if (!confirm("¿Eliminar?")) return;
+    await fetch(`${API_URL}/${id}`, { method: "DELETE" });
+    cargar();
+  };
+
+  return (
+    <div className="container mt-4">
+      <form onSubmit={handleSubmit} className="mb-4">
+        <div className="input-group">
+          <input
+            type="text"
+            className="form-control"
+            placeholder="Título del videojuego"
+            value={titulo}
+            onChange={(e) => setTitulo(e.target.value)}
+            required
+          />
+          <button className="btn btn-dark" type="submit">
+            {editando ? "Actualizar" : "Guardar"}
+          </button>
+          {editando && (
+            <button
+              type="button"
+              className="btn btn-outline-secondary"
+              onClick={() => { setEditando(null); setTitulo(""); }}
+            >
+              Cancelar
+            </button>
+          )}
+        </div>
+      </form>
+
+      <table className="table table-bordered table-hover">
+        <thead className="table-dark">
+          <tr>
+            <th>#</th>
+            <th>Título</th>
+            <th>Categorías</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {videojuegos.length === 0 ? (
+            <tr>
+              <td colSpan={4} className="text-center text-muted">Sin registros</td>
+            </tr>
+          ) : (
+            videojuegos.map((vj) => (
+              <tr key={vj.id}>
+                <td>{vj.id}</td>
+                <td>{vj.titulo}</td>
+                <td>
+                  {vj.categorias?.map((c) => (
+                    <span key={c.id} className="badge bg-secondary me-1">{c.nombre}</span>
+                  ))}
+                </td>
+                <td>
+                  <button className="btn btn-sm btn-outline-dark me-2" onClick={() => handleEditar(vj)}>Editar</button>
+                  <button className="btn btn-sm btn-outline-danger" onClick={() => handleEliminar(vj.id)}>Eliminar</button>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+
+
+
+
